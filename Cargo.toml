@@ -2,10 +2,12 @@
 name = "vex-rs-lib"
 version = "0.1.0"
 edition = "2021"
+license = "GPL-3.0"
+description = "Library with wrappers for features from the vex_rt crate which use uom-si values. Plus some extra features"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
 uom = { version = "0.33.0", default-features = false, features = ["f64", "si"] }
-vex-rt = { git = "https://gitlab.com/professoralex13/vex-rt" }
+vex-rt = { version = "0.11.1", git = "https://gitlab.com/professoralex13/vex-rt" }
 libm = "0.2.5"
