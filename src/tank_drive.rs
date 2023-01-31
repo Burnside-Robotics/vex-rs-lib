@@ -1,10 +1,18 @@
-use libm::{pow, sqrt};
-use uom::si::{
-	f64::{Angle, Length, Ratio},
-	length::meter,
+use uom::{
+	si::{
+		angle::{degree, radian},
+		f64::{Angle, Length, Ratio},
+		ratio::ratio,
+	},
+	ConstZero,
+};
+use vex_rt::{
+	prelude::{println, BrakeMode},
+	rtos::{Context, Loop, Task},
+	select,
 };
 
-use crate::{motor::Motor, pid::PidController, Gains};
+use crate::{motor::Motor, pid::PidController, Gains, PID_CYCLE_DURATION};
 
 pub struct TankDrive<const N: usize> {
 	left_motors: [Motor; N],
@@ -13,27 +21,29 @@ pub struct TankDrive<const N: usize> {
 	drive_ratio: Ratio,
 	wheel_radius: Length,
 
-	turn_radius: Length,
+	track_width: Length,
 
-	distance_gains: Gains<Ratio>,
-	turn_gains: Gains<Ratio>,
+	distance_gains: Gains<f64>,
+	turn_gains: Gains<f64>,
+
+	pid_end_threshold: Angle,
 }
 
 impl<const N: usize> TankDrive<N> {
 	pub fn new(
 		left_motors: [Motor; N], right_motors: [Motor; N], drive_ratio: Ratio, wheel_diameter: Length,
-		track_width: Length, track_length: Length, distance_gains: Gains<Ratio>, turn_gains: Gains<Ratio>,
+		track_width: Length, track_length: Length, distance_gains: Gains<f64>, turn_gains: Gains<f64>,
+		pid_end_threshold: Angle,
 	) -> Self {
 		Self {
 			left_motors,
 			right_motors,
 			drive_ratio,
 			wheel_radius: wheel_diameter / 2.0,
-			turn_radius: Length::new::<meter>(
-				sqrt(pow(track_length.get::<meter>(), 2.0) + pow(track_width.get::<meter>(), 2.0)) / 2.0,
-			),
+			track_width,
 			distance_gains,
 			turn_gains,
+			pid_end_threshold,
 		}
 	}
 
@@ -67,43 +77,93 @@ impl<const N: usize> TankDrive<N> {
 
 	fn get_right_position(&self) -> Angle { self.right_motors[0].get_position() }
 
-	pub fn drive_distance(&self, distance: Length) {
+	pub fn drive_distance(&self, distance: Length, ctx: Context) {
 		self.tare_left_postition();
 		self.tare_right_postition();
 
-		let wheel_rotation_goal: Angle = (distance / self.wheel_radius).into();
+		let wheel_rotation_goal = (distance / self.wheel_radius).get::<ratio>();
 
-		let motor_rotation_goal: Angle = (wheel_rotation_goal / self.drive_ratio).into();
+		let motor_rotation_goal = (wheel_rotation_goal / self.drive_ratio).get::<ratio>();
 
-		let mut left_controller: PidController<Angle, Ratio> =
-			PidController::new(motor_rotation_goal, self.distance_gains);
-		let mut right_controller: PidController<Angle, Ratio> =
-			PidController::new(motor_rotation_goal, self.distance_gains);
+		let mut left_controller = PidController::new(
+			motor_rotation_goal,
+			self.distance_gains,
+			PID_CYCLE_DURATION,
+			self.pid_end_threshold.get::<radian>(),
+		);
+		let mut right_controller = PidController::new(
+			motor_rotation_goal,
+			self.distance_gains,
+			PID_CYCLE_DURATION,
+			self.pid_end_threshold.get::<radian>(),
+		);
+
+		let mut pause = Loop::new(PID_CYCLE_DURATION);
 
 		loop {
-			let left_motor_speed: Ratio = left_controller.cycle(self.get_left_position());
-			let right_motor_speed: Ratio = right_controller.cycle(self.get_right_position());
+			if left_controller.is_complete(self.get_left_position().get::<radian>())
+				&& right_controller.is_complete(self.get_right_position().get::<radian>())
+			{
+				self.drive_left(Ratio::ZERO);
+				self.drive_right(Ratio::ZERO);
+				break;
+			}
 
-			self.drive_left(left_motor_speed);
-			self.drive_right(right_motor_speed);
+			let left_motor_speed = left_controller.cycle(self.get_left_position().get::<radian>());
+			let right_motor_speed = right_controller.cycle(self.get_right_position().get::<radian>());
+
+			self.drive_left(Ratio::new::<ratio>(left_motor_speed));
+			self.drive_right(Ratio::new::<ratio>(right_motor_speed));
+
+			select! {
+				_ = ctx.done() => break,
+				_ = pause.select() => continue
+			}
 		}
 	}
 
-	pub fn rotate_angle(&self, angle: Angle) {
+	pub fn rotate_angle(&self, angle: Angle, ctx: Context) {
 		self.tare_left_postition();
 		self.tare_right_postition();
 
-		let rotation_goal: Angle = ((angle * self.turn_radius) / self.wheel_radius).into();
+		let wheel_rotation_goal = ((angle * self.track_width * 0.5) / self.wheel_radius).get::<ratio>();
 
-		let mut left_controller: PidController<Angle, Ratio> = PidController::new(rotation_goal, self.turn_gains);
-		let mut right_controller: PidController<Angle, Ratio> = PidController::new(-rotation_goal, self.turn_gains);
+		let motor_rotation_goal = (wheel_rotation_goal / self.drive_ratio).get::<ratio>();
+
+		let mut left_controller = PidController::new(
+			motor_rotation_goal,
+			self.turn_gains,
+			PID_CYCLE_DURATION,
+			self.pid_end_threshold.get::<radian>(),
+		);
+		let mut right_controller = PidController::new(
+			-motor_rotation_goal,
+			self.turn_gains,
+			PID_CYCLE_DURATION,
+			self.pid_end_threshold.get::<radian>(),
+		);
+
+		let mut pause = Loop::new(PID_CYCLE_DURATION);
 
 		loop {
-			let left_motor_speed: Ratio = left_controller.cycle(self.get_left_position());
-			let right_motor_speed: Ratio = right_controller.cycle(self.get_right_position());
+			if left_controller.is_complete(self.get_left_position().get::<radian>())
+				&& right_controller.is_complete(self.get_right_position().get::<radian>())
+			{
+				self.drive_left(Ratio::ZERO);
+				self.drive_right(Ratio::ZERO);
+				break;
+			}
 
-			self.drive_left(left_motor_speed);
-			self.drive_right(right_motor_speed);
+			let left_motor_speed = left_controller.cycle(self.get_left_position().get::<radian>());
+			let right_motor_speed = right_controller.cycle(self.get_right_position().get::<radian>());
+
+			self.drive_left(Ratio::new::<ratio>(left_motor_speed));
+			self.drive_right(Ratio::new::<ratio>(right_motor_speed));
+
+			select! {
+				_ = ctx.done() => break,
+				_ = pause.select() => continue
+			}
 		}
 	}
 }

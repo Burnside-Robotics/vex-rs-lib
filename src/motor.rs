@@ -24,7 +24,10 @@ impl Debug for Motor {
 impl Motor {
 	pub fn new(port: SmartPort, gearset: Gearset, reversed: bool) -> Self {
 		Self {
-			internal: Mutex::new(port.into_motor(gearset, vex_rt::prelude::EncoderUnits::Degrees, reversed)),
+			internal: Mutex::new(
+				port.into_motor(gearset, vex_rt::prelude::EncoderUnits::Degrees, reversed)
+					.unwrap(),
+			),
 		}
 	}
 

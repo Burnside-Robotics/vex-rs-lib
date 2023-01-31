@@ -5,9 +5,9 @@ pub struct AnalogStick<'a> {
 }
 
 impl<'a> AnalogStick<'a> {
-	pub fn get_x(&self) -> Ratio { Ratio::new::<ratio>(self.internal.get_x().unwrap() as f64) / 127.0 }
+	pub fn get_x(&self) -> Ratio { Ratio::new::<ratio>(self.internal.get_x().unwrap() as f64 / 127.0) }
 
-	pub fn get_y(&self) -> Ratio { Ratio::new::<ratio>(self.internal.get_y().unwrap() as f64) / 127.0 }
+	pub fn get_y(&self) -> Ratio { Ratio::new::<ratio>(self.internal.get_y().unwrap() as f64 / 127.0) }
 }
 
 impl<'a> From<&'a vex_rt::controller::AnalogStick> for AnalogStick<'a> {
