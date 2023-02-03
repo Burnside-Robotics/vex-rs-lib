@@ -30,7 +30,7 @@ impl XDrive {
 		}
 	}
 
-	pub fn drive(&self, x: Ratio, y: Ratio, rotation: Ratio) {
+	pub fn drive(&mut self, x: Ratio, y: Ratio, rotation: Ratio) {
 		self.front_left_motor.move_ratio(y + x + rotation);
 		self.front_right_motor.move_ratio(y - x - rotation);
 		self.back_left_motor.move_ratio(y - x + rotation);

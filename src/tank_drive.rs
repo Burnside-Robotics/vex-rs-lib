@@ -1,14 +1,13 @@
 use uom::{
 	si::{
-		angle::{degree, radian},
+		angle::radian,
 		f64::{Angle, Length, Ratio},
 		ratio::ratio,
 	},
 	ConstZero,
 };
 use vex_rt::{
-	prelude::{println, BrakeMode},
-	rtos::{Context, Loop, Task},
+	rtos::{Context, Loop},
 	select,
 };
 
@@ -47,37 +46,37 @@ impl<const N: usize> TankDrive<N> {
 		}
 	}
 
-	pub fn drive_tank(&self, left: Ratio, right: Ratio) {
+	pub fn drive_tank(&mut self, left: Ratio, right: Ratio) {
 		self.drive_left(left);
 		self.drive_right(right);
 	}
 
-	pub fn drive_arcade(&self, x: Ratio, y: Ratio) {
+	pub fn drive_arcade(&mut self, x: Ratio, y: Ratio) {
 		self.drive_left(y + x);
 		self.drive_right(y - x);
 	}
 
-	fn drive_left(&self, value: Ratio) {
+	fn drive_left(&mut self, value: Ratio) {
 		for i in 0..N {
 			self.left_motors[i].move_ratio(value);
 		}
 	}
 
-	fn drive_right(&self, value: Ratio) {
+	fn drive_right(&mut self, value: Ratio) {
 		for i in 0..N {
 			self.right_motors[i].move_ratio(value);
 		}
 	}
 
-	fn tare_left_postition(&self) { self.left_motors[0].tare_position(); }
+	fn tare_left_postition(&mut self) { self.left_motors[0].tare_position(); }
 
-	fn tare_right_postition(&self) { self.right_motors[0].tare_position(); }
+	fn tare_right_postition(&mut self) { self.right_motors[0].tare_position(); }
 
 	fn get_left_position(&self) -> Angle { self.left_motors[0].get_position() }
 
 	fn get_right_position(&self) -> Angle { self.right_motors[0].get_position() }
 
-	pub fn drive_distance(&self, distance: Length, ctx: Context) {
+	pub fn drive_distance(&mut self, distance: Length, ctx: Context) {
 		self.tare_left_postition();
 		self.tare_right_postition();
 
@@ -122,7 +121,7 @@ impl<const N: usize> TankDrive<N> {
 		}
 	}
 
-	pub fn rotate_angle(&self, angle: Angle, ctx: Context) {
+	pub fn rotate_angle(&mut self, angle: Angle, ctx: Context) {
 		self.tare_left_postition();
 		self.tare_right_postition();
 
