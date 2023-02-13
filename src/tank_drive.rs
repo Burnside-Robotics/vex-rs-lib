@@ -13,7 +13,7 @@ use vex_rt::{
 	select,
 };
 
-use crate::{motor::Motor, pid::PidController, Gains, PID_CYCLE_DURATION};
+use crate::{motor::Motor, pid::PositionController, Gains, PID_CYCLE_DURATION};
 
 pub struct TankDrive<const N: usize> {
 	left_motors: [Motor; N],
@@ -86,16 +86,14 @@ impl<const N: usize> TankDrive<N> {
 
 		let motor_rotation_goal = (wheel_rotation_goal / self.drive_ratio).get::<ratio>();
 
-		let mut left_controller = PidController::new(
+		let mut left_controller = PositionController::new(
 			motor_rotation_goal,
 			self.distance_gains,
-			PID_CYCLE_DURATION,
 			self.pid_end_threshold.get::<radian>(),
 		);
-		let mut right_controller = PidController::new(
+		let mut right_controller = PositionController::new(
 			motor_rotation_goal,
 			self.distance_gains,
-			PID_CYCLE_DURATION,
 			self.pid_end_threshold.get::<radian>(),
 		);
 
@@ -131,16 +129,14 @@ impl<const N: usize> TankDrive<N> {
 
 		let motor_rotation_goal = (wheel_rotation_goal / self.drive_ratio).get::<ratio>();
 
-		let mut left_controller = PidController::new(
+		let mut left_controller = PositionController::new(
 			motor_rotation_goal,
 			self.turn_gains,
-			PID_CYCLE_DURATION,
 			self.pid_end_threshold.get::<radian>(),
 		);
-		let mut right_controller = PidController::new(
+		let mut right_controller = PositionController::new(
 			-motor_rotation_goal,
 			self.turn_gains,
-			PID_CYCLE_DURATION,
 			self.pid_end_threshold.get::<radian>(),
 		);
 
