@@ -7,6 +7,8 @@ use uom::{
 	ConstZero,
 };
 use vex_rt::{
+	macros,
+	prelude::println,
 	rtos::{Context, Loop},
 	select,
 };
@@ -76,7 +78,7 @@ impl<const N: usize> TankDrive<N> {
 
 	fn get_right_position(&self) -> Angle { self.right_motors[0].get_position() }
 
-	pub fn drive_distance(&mut self, distance: Length, ctx: Context) {
+	pub fn drive_distance(&mut self, distance: Length, ctx: &Context) {
 		self.tare_left_postition();
 		self.tare_right_postition();
 
@@ -121,7 +123,7 @@ impl<const N: usize> TankDrive<N> {
 		}
 	}
 
-	pub fn rotate_angle(&mut self, angle: Angle, ctx: Context) {
+	pub fn rotate_angle(&mut self, angle: Angle, ctx: &Context) {
 		self.tare_left_postition();
 		self.tare_right_postition();
 
@@ -148,6 +150,7 @@ impl<const N: usize> TankDrive<N> {
 			if left_controller.is_complete(self.get_left_position().get::<radian>())
 				&& right_controller.is_complete(self.get_right_position().get::<radian>())
 			{
+				println!("done");
 				self.drive_left(Ratio::ZERO);
 				self.drive_right(Ratio::ZERO);
 				break;

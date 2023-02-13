@@ -1,6 +1,9 @@
 use core::time::Duration;
 
-use vex_rt::rtos::{time_since_start, Instant};
+use vex_rt::{
+	prelude::println,
+	rtos::{time_since_start, Instant},
+};
 
 use crate::Gains;
 
@@ -40,6 +43,7 @@ impl PidController {
 
 	pub fn is_complete(&mut self, current: f64) -> bool {
 		let error = self.goal - current;
+		println!("{error} {}", self.end_threshold);
 		error <= self.end_threshold && error >= -self.end_threshold
 	}
 
