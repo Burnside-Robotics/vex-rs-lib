@@ -1,84 +1,103 @@
-use vex_rt::{
-	prelude::println,
-	rtos::{time_since_start, Instant},
+use uom::{
+	si::{
+		angular_acceleration::radian_per_second_squared,
+		electric_potential::volt,
+		f64::{Angle, AngularAbsement, AngularAcceleration, AngularVelocity, ElectricPotential, Time},
+	},
+	ConstZero,
 };
+use vex_rt::rtos::{time_since_start, Instant};
 
 use crate::Gains;
 
 pub struct PositionController {
-	integral: f64,
-	previous_error: f64,
+	integral: AngularAbsement,
+	previous_error: Option<Angle>,
 	previous_time: Instant,
 
-	goal: f64,
+	target: Angle,
 
-	gains: Gains<f64>,
+	gains: Gains,
 
-	end_threshold: f64,
+	completion_threshold: Angle,
 }
 
 impl PositionController {
-	pub fn new(goal: f64, gains: Gains<f64>, end_threshold: f64) -> Self {
+	pub fn new(target: Angle, gains: Gains, completion_threshold: Angle) -> Self {
 		Self {
-			integral: 0.0,
-			previous_error: 0.0,
+			integral: AngularAbsement::ZERO,
+			previous_error: None,
 
 			previous_time: time_since_start(),
 
-			goal,
+			target,
 
 			gains,
 
-			end_threshold,
+			completion_threshold,
 		}
 	}
 
-	pub fn is_complete(&mut self, current: f64) -> bool {
-		let error = self.goal - current;
-		println!("{error} {}", self.end_threshold);
-		error <= self.end_threshold && error >= -self.end_threshold
+	/// Determines whether the controller has reached the target by checking if the error has changed since the last
+	/// cycle
+	pub fn is_complete(&self, current: Angle) -> bool {
+		self.previous_error
+			.map(|previous_error: Angle| (current - self.target) == previous_error)
+			.unwrap_or(false)
 	}
 
-	pub fn cycle(&mut self, current: f64) -> f64 {
-		let error = self.goal - current;
+	/// Sets the current target that the controller is aiming for
+	pub fn set_target(&mut self, target: Angle) { self.target = target; }
 
-		let delta_time = (time_since_start() - self.previous_time).as_secs_f64();
+	/// Runs a cycle of the PID and returns the velocity the controller determines the motors should be moving at
+	pub fn cycle(&mut self, current: Angle) -> AngularVelocity {
+		let error: Angle = self.target - current;
 
-		self.integral += error * delta_time;
+		let delta_time: Time = (time_since_start() - self.previous_time).try_into().unwrap();
 
-		let derivative: f64 = (error - self.previous_error) / delta_time;
+		self.integral += (error * delta_time).into();
 
-		self.previous_error = error;
+		let previous_error: Angle = self.previous_error.unwrap_or(error);
+
+		let derivative: AngularVelocity = ((error - previous_error) / delta_time).into();
+
+		self.previous_error = Some(error);
 
 		self.previous_time = time_since_start();
 
-		self.gains.proportional * error + self.gains.integral * self.integral + self.gains.derivative * derivative
+		let proportional_channel: AngularVelocity = (self.gains.proportional * error).into();
+
+		let integral_channel: AngularVelocity = (self.gains.integral * self.integral).into();
+
+		let derivative_channel: AngularVelocity = (self.gains.derivative * derivative).into();
+
+		proportional_channel + integral_channel + derivative_channel
 	}
 }
 
 pub struct VelocityController {
-	previous_error: f64,
-	previous_previous_error: f64,
-	previous_output: f64,
+	previous_error: Option<AngularVelocity>,
+	previous_previous_error: Option<AngularVelocity>,
+	previous_output: AngularAcceleration,
 	previous_time: Instant,
 
-	goal: f64,
+	target: AngularVelocity,
 
-	gains: Gains<f64>,
+	gains: Gains,
 
-	target_threshold: f64,
+	target_threshold: AngularVelocity,
 }
 
 impl VelocityController {
-	pub fn new(goal: f64, gains: Gains<f64>, target_threshold: f64) -> Self {
+	pub fn new(target: AngularVelocity, gains: Gains, target_threshold: AngularVelocity) -> Self {
 		Self {
-			previous_error: 0.0,
-			previous_previous_error: 0.0,
-			previous_output: 0.0,
+			previous_error: None,
+			previous_previous_error: None,
+			previous_output: AngularAcceleration::ZERO,
 
 			previous_time: time_since_start(),
 
-			goal,
+			target,
 
 			gains,
 
@@ -86,32 +105,43 @@ impl VelocityController {
 		}
 	}
 
-	pub fn is_at_speed(&mut self, current: f64) -> bool {
-		let error = self.goal - current;
-		error <= self.target_threshold && error >= -self.target_threshold
+	pub fn is_at_speed(&self, current: AngularVelocity) -> bool {
+		let error: AngularVelocity = self.target - current;
+		error.abs() <= self.target_threshold
 	}
 
-	pub fn cycle(&mut self, current: f64) -> f64 {
-		let error = self.goal - current;
-		let delta_error = error - self.previous_error;
+	pub fn set_target(&mut self, target: AngularVelocity) { self.target = target; }
 
-		let delta_time = (time_since_start() - self.previous_time).as_secs_f64();
+	pub fn cycle(&mut self, current: AngularVelocity) -> ElectricPotential {
+		let error: AngularVelocity = self.target - current;
 
-		let integral = error * delta_time;
-		let derivative: f64 = (error - self.previous_error * 2.0 + self.previous_previous_error) / delta_time;
+		let previous_error: AngularVelocity = self.previous_error.unwrap_or(error);
+		let previous_previous_error: AngularVelocity = self.previous_previous_error.unwrap_or(error);
 
-		self.previous_previous_error = self.previous_error;
-		self.previous_error = error;
+		let delta_error: AngularVelocity = error - previous_error;
+
+		let delta_time: Time = (time_since_start() - self.previous_time).try_into().unwrap();
+
+		let integral: Angle = (error * delta_time).into();
+		let derivative: AngularAcceleration =
+			((error - previous_error * 2.0 + previous_previous_error) / delta_time).into();
+
+		self.previous_previous_error = Some(previous_error);
+		self.previous_error = Some(error);
 
 		self.previous_time = time_since_start();
 
-		let output = self.previous_output
-			+ self.gains.proportional * delta_error
-			+ self.gains.integral * integral
-			+ self.gains.derivative * derivative;
+		let proportional_channel: AngularAcceleration = (self.gains.proportional * delta_error).into();
+		let integral_channel: AngularAcceleration = (self.gains.integral * integral).into();
+		let derivative_channel: AngularAcceleration = (self.gains.derivative * derivative).into();
+
+		let output: AngularAcceleration =
+			self.previous_output + proportional_channel + integral_channel + derivative_channel;
 
 		self.previous_output = output;
 
-		output
+		ElectricPotential::new::<volt>(
+			(proportional_channel + integral_channel + derivative_channel).get::<radian_per_second_squared>(),
+		)
 	}
 }

@@ -8,6 +8,5 @@ description = "Library with wrappers for features from the vex_rt crate which us
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-uom = { version = "0.33.0", default-features = false, features = ["f64", "si"] }
-vex-rt = "0.14.0"
-libm = "0.2.5"
+uom = { git = "https://github.com/professoralex13/uom", default-features = false, features = ["f64", "si"] }
+vex-rt = { git = "https://gitlab.com/professoralex13/vex-rt/", branch = "uom", features = ["uom"] }

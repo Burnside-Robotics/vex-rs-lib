@@ -1,167 +1,198 @@
 use uom::{
-	si::{
-		angle::radian,
-		f64::{Angle, Length, Ratio},
-		ratio::ratio,
-	},
+	si::f64::{Angle, AngularVelocity, ElectricPotential, Length, Ratio},
 	ConstZero,
 };
 use vex_rt::{
-	macros,
-	prelude::println,
+	prelude::{println, Motor, MotorError},
 	rtos::{Context, Loop},
 	select,
 };
 
-use crate::{motor::Motor, pid::PositionController, Gains, PID_CYCLE_DURATION};
+use crate::{
+	pid::{PositionController, VelocityController},
+	Gains,
+	PID_CYCLE_DURATION,
+};
 
 pub struct TankDrive<const N: usize> {
-	left_motors: [Motor; N],
-	right_motors: [Motor; N],
+	pub left_motors: [Motor; N],
+	pub right_motors: [Motor; N],
 
-	drive_ratio: Ratio,
-	wheel_radius: Length,
+	pub drive_ratio: Ratio,
+	pub wheel_diameter: Length,
+	pub track_width: Length,
 
-	track_width: Length,
+	pub distance_gains: Gains,
+	pub turn_gains: Gains,
 
-	distance_gains: Gains<f64>,
-	turn_gains: Gains<f64>,
+	pub left_velocity_gains: Gains,
+	pub right_velocity_gains: Gains,
 
-	pid_end_threshold: Angle,
+	pub position_threshold: Angle,
+	pub velocity_threshold: AngularVelocity,
 }
 
 impl<const N: usize> TankDrive<N> {
-	pub fn new(
-		left_motors: [Motor; N], right_motors: [Motor; N], drive_ratio: Ratio, wheel_diameter: Length,
-		track_width: Length, track_length: Length, distance_gains: Gains<f64>, turn_gains: Gains<f64>,
-		pid_end_threshold: Angle,
-	) -> Self {
-		Self {
-			left_motors,
-			right_motors,
-			drive_ratio,
-			wheel_radius: wheel_diameter / 2.0,
-			track_width,
-			distance_gains,
-			turn_gains,
-			pid_end_threshold,
+	fn wheel_radius(&self) -> Length { return self.wheel_diameter / 2.0; }
+
+	/// Sets the drive train motor powers based on a left and right input,
+	pub fn drive_tank(&mut self, left: Ratio, right: Ratio) -> Result<(), MotorError> {
+		self.drive_left(left)?;
+		self.drive_right(right)?;
+		Ok(())
+	}
+
+	/// Sets the drive train motor powers based on a horizontal and rotational input
+	pub fn drive_arcade(&mut self, x: Ratio, y: Ratio) -> Result<(), MotorError> {
+		self.drive_left(y + x)?;
+		self.drive_right(y - x)?;
+		Ok(())
+	}
+
+	fn drive_left(&mut self, value: Ratio) -> Result<(), MotorError> {
+		for motor in self.left_motors.iter_mut() {
+			motor.move_ratio(value)?
 		}
+		Ok(())
 	}
 
-	pub fn drive_tank(&mut self, left: Ratio, right: Ratio) {
-		self.drive_left(left);
-		self.drive_right(right);
-	}
-
-	pub fn drive_arcade(&mut self, x: Ratio, y: Ratio) {
-		self.drive_left(y + x);
-		self.drive_right(y - x);
-	}
-
-	fn drive_left(&mut self, value: Ratio) {
-		for i in 0..N {
-			self.left_motors[i].move_ratio(value);
+	fn drive_left_voltage(&mut self, voltage: ElectricPotential) -> Result<(), MotorError> {
+		for motor in self.left_motors.iter_mut() {
+			motor.move_voltage(voltage)?
 		}
+		Ok(())
 	}
 
-	fn drive_right(&mut self, value: Ratio) {
-		for i in 0..N {
-			self.right_motors[i].move_ratio(value);
+	fn drive_right(&mut self, value: Ratio) -> Result<(), MotorError> {
+		for motor in self.right_motors.iter_mut() {
+			motor.move_ratio(value)?
 		}
+		Ok(())
 	}
 
-	fn tare_left_postition(&mut self) { self.left_motors[0].tare_position(); }
+	fn drive_right_voltage(&mut self, voltage: ElectricPotential) -> Result<(), MotorError> {
+		for motor in self.right_motors.iter_mut() {
+			motor.move_voltage(voltage)?
+		}
+		Ok(())
+	}
 
-	fn tare_right_postition(&mut self) { self.right_motors[0].tare_position(); }
+	fn tare_left_postition(&mut self) -> Result<(), MotorError> { self.left_motors[0].tare_position() }
 
-	fn get_left_position(&self) -> Angle { self.left_motors[0].get_position() }
+	fn tare_right_postition(&mut self) -> Result<(), MotorError> { self.right_motors[0].tare_position() }
 
-	fn get_right_position(&self) -> Angle { self.right_motors[0].get_position() }
+	fn get_left_position(&self) -> Result<Angle, MotorError> { self.left_motors[0].get_position() }
 
-	pub fn drive_distance(&mut self, distance: Length, ctx: &Context) {
-		self.tare_left_postition();
-		self.tare_right_postition();
+	fn get_right_position(&self) -> Result<Angle, MotorError> { self.right_motors[0].get_position() }
 
-		let wheel_rotation_goal = (distance / self.wheel_radius).get::<ratio>();
+	fn get_left_velocity(&self) -> Result<AngularVelocity, MotorError> { self.left_motors[0].get_actual_velocity() }
 
-		let motor_rotation_goal = (wheel_rotation_goal / self.drive_ratio).get::<ratio>();
+	fn get_right_velocity(&self) -> Result<AngularVelocity, MotorError> { self.right_motors[0].get_actual_velocity() }
 
-		let mut left_controller = PositionController::new(
-			motor_rotation_goal,
-			self.distance_gains,
-			self.pid_end_threshold.get::<radian>(),
-		);
-		let mut right_controller = PositionController::new(
-			motor_rotation_goal,
-			self.distance_gains,
-			self.pid_end_threshold.get::<radian>(),
+	/// Moves the drive train a specified relative distance
+	pub fn drive_distance(&mut self, distance: Length, ctx: &Context) -> Result<(), MotorError> {
+		self.tare_left_postition()?;
+		self.tare_right_postition()?;
+
+		let wheel_rotation_goal: Angle = (distance / self.wheel_radius()).into();
+
+		let motor_rotation_goal: Angle = (wheel_rotation_goal / self.drive_ratio).into();
+
+		let mut left_position_controller =
+			PositionController::new(motor_rotation_goal, self.distance_gains, self.position_threshold);
+		let mut right_position_controller =
+			PositionController::new(motor_rotation_goal, self.distance_gains, self.position_threshold);
+
+		let mut left_speed_controller =
+			VelocityController::new(AngularVelocity::ZERO, self.left_velocity_gains, self.velocity_threshold);
+		let mut right_speed_controller = VelocityController::new(
+			AngularVelocity::ZERO,
+			self.right_velocity_gains,
+			self.velocity_threshold,
 		);
 
 		let mut pause = Loop::new(PID_CYCLE_DURATION);
 
 		loop {
-			if left_controller.is_complete(self.get_left_position().get::<radian>())
-				&& right_controller.is_complete(self.get_right_position().get::<radian>())
+			if left_position_controller.is_complete(self.get_left_position()?)
+				&& right_position_controller.is_complete(self.get_right_position()?)
 			{
-				self.drive_left(Ratio::ZERO);
-				self.drive_right(Ratio::ZERO);
+				self.drive_left(Ratio::ZERO)?;
+				self.drive_right(Ratio::ZERO)?;
 				break;
 			}
 
-			let left_motor_speed = left_controller.cycle(self.get_left_position().get::<radian>());
-			let right_motor_speed = right_controller.cycle(self.get_right_position().get::<radian>());
+			let left_motor_speed: AngularVelocity = left_position_controller.cycle(self.get_left_position()?);
+			let right_motor_speed: AngularVelocity = right_position_controller.cycle(self.get_right_position()?);
 
-			self.drive_left(Ratio::new::<ratio>(left_motor_speed));
-			self.drive_right(Ratio::new::<ratio>(right_motor_speed));
+			left_speed_controller.set_target(left_motor_speed);
+			right_speed_controller.set_target(right_motor_speed);
+
+			let left_motor_voltage: ElectricPotential = left_speed_controller.cycle(self.get_left_velocity()?);
+			let right_motor_voltage: ElectricPotential = right_speed_controller.cycle(self.get_right_velocity()?);
+
+			self.drive_left_voltage(left_motor_voltage)?;
+			self.drive_right_voltage(right_motor_voltage)?;
 
 			select! {
 				_ = ctx.done() => break,
 				_ = pause.select() => continue
 			}
 		}
+
+		Ok(())
 	}
 
-	pub fn rotate_angle(&mut self, angle: Angle, ctx: &Context) {
-		self.tare_left_postition();
-		self.tare_right_postition();
+	/// Rotates the drive train a specified relative angle
+	pub fn rotate_angle(&mut self, angle: Angle, ctx: &Context) -> Result<(), MotorError> {
+		self.tare_left_postition()?;
+		self.tare_right_postition()?;
 
-		let wheel_rotation_goal = ((angle * self.track_width * 0.5) / self.wheel_radius).get::<ratio>();
+		let wheel_rotation_goal: Angle = ((angle * self.track_width * 0.5) / self.wheel_radius()).into();
 
-		let motor_rotation_goal = (wheel_rotation_goal / self.drive_ratio).get::<ratio>();
+		let motor_rotation_goal: Angle = (wheel_rotation_goal / self.drive_ratio).into();
 
-		let mut left_controller = PositionController::new(
-			motor_rotation_goal,
-			self.turn_gains,
-			self.pid_end_threshold.get::<radian>(),
-		);
-		let mut right_controller = PositionController::new(
-			-motor_rotation_goal,
-			self.turn_gains,
-			self.pid_end_threshold.get::<radian>(),
+		let mut left_position_controller =
+			PositionController::new(motor_rotation_goal, self.turn_gains, self.position_threshold);
+		let mut right_position_controller =
+			PositionController::new(-motor_rotation_goal, self.turn_gains, self.position_threshold);
+
+		let mut left_speed_controller =
+			VelocityController::new(AngularVelocity::ZERO, self.left_velocity_gains, self.velocity_threshold);
+		let mut right_speed_controller = VelocityController::new(
+			AngularVelocity::ZERO,
+			self.right_velocity_gains,
+			self.velocity_threshold,
 		);
 
 		let mut pause = Loop::new(PID_CYCLE_DURATION);
 
 		loop {
-			if left_controller.is_complete(self.get_left_position().get::<radian>())
-				&& right_controller.is_complete(self.get_right_position().get::<radian>())
+			if left_position_controller.is_complete(self.get_left_position()?)
+				&& right_position_controller.is_complete(self.get_right_position()?)
 			{
-				println!("done");
-				self.drive_left(Ratio::ZERO);
-				self.drive_right(Ratio::ZERO);
+				self.drive_left(Ratio::ZERO)?;
+				self.drive_right(Ratio::ZERO)?;
 				break;
 			}
 
-			let left_motor_speed = left_controller.cycle(self.get_left_position().get::<radian>());
-			let right_motor_speed = right_controller.cycle(self.get_right_position().get::<radian>());
+			let left_motor_speed: AngularVelocity = left_position_controller.cycle(self.get_left_position()?);
+			let right_motor_speed: AngularVelocity = right_position_controller.cycle(self.get_right_position()?);
 
-			self.drive_left(Ratio::new::<ratio>(left_motor_speed));
-			self.drive_right(Ratio::new::<ratio>(right_motor_speed));
+			left_speed_controller.set_target(left_motor_speed);
+			right_speed_controller.set_target(right_motor_speed);
 
+			let left_motor_voltage: ElectricPotential = left_speed_controller.cycle(self.get_left_velocity()?);
+			let right_motor_voltage: ElectricPotential = right_speed_controller.cycle(self.get_right_velocity()?);
+
+			self.drive_left_voltage(left_motor_voltage)?;
+			self.drive_right_voltage(right_motor_voltage)?;
 			select! {
 				_ = ctx.done() => break,
 				_ = pause.select() => continue
 			}
 		}
+
+		Ok(())
 	}
 }

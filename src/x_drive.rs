@@ -1,6 +1,5 @@
 use uom::si::f64::{Length, Ratio};
-
-use crate::motor::Motor;
+use vex_rt::prelude::{Motor, MotorError};
 
 pub struct XDrive {
 	front_left_motor: Motor,
@@ -30,10 +29,11 @@ impl XDrive {
 		}
 	}
 
-	pub fn drive(&mut self, x: Ratio, y: Ratio, rotation: Ratio) {
-		self.front_left_motor.move_ratio(y + x + rotation);
-		self.front_right_motor.move_ratio(y - x - rotation);
-		self.back_left_motor.move_ratio(y - x + rotation);
-		self.back_right_motor.move_ratio(y + x - rotation);
+	pub fn drive(&mut self, x: Ratio, y: Ratio, rotation: Ratio) -> Result<(), MotorError> {
+		self.front_left_motor.move_ratio(y + x + rotation)?;
+		self.front_right_motor.move_ratio(y - x - rotation)?;
+		self.back_left_motor.move_ratio(y - x + rotation)?;
+		self.back_right_motor.move_ratio(y + x - rotation)?;
+		Ok(())
 	}
 }
