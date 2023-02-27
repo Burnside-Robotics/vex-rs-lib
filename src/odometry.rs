@@ -1,9 +1,20 @@
-use uom::si::{
-	angle::radian,
-	f64::{Angle, Length, Ratio},
-	ratio::ratio,
+use core::time::Duration;
+
+use uom::{
+	si::{
+		angle::radian,
+		f64::{Angle, Length, Ratio},
+		length::meter,
+	},
+	ConstZero,
 };
-use vex_rt::rotation::{RotationSensor, RotationSensorError};
+use vex_rt::{
+	rotation::{RotationSensor, RotationSensorError},
+	rtos::{Loop, Task},
+};
+
+use crate::math::*;
+
 pub struct Position {
 	x: Length,
 	y: Length,
@@ -15,7 +26,7 @@ pub struct OdometrySystem {
 	right_sensor: RotationSensor,
 	rear_sensor: RotationSensor,
 
-	wheel_diameter: Length,
+	wheel_radius: Length,
 
 	last_left_angle: Angle,
 	last_right_angle: Angle,
@@ -25,50 +36,101 @@ pub struct OdometrySystem {
 	right_wheel_offset: Length,
 	rear_wheel_offset: Length,
 
-	last_x: Length,
-	last_y: Length,
-	last_heading: Angle,
+	x_state: Length,
+	y_state: Length,
+	heading_state: Angle,
 }
 
 impl OdometrySystem {
-	pub fn wheel_radius(&self) -> Length { self.wheel_diameter / 2.0 }
+	pub fn new(
+		left_sensor: RotationSensor, right_sensor: RotationSensor, rear_sensor: RotationSensor, wheel_diameter: Length,
+		left_wheel_offset: Length, right_wheel_offset: Length, rear_wheel_offset: Length,
+	) -> Self {
+		Self {
+			left_sensor,
+			right_sensor,
+			rear_sensor,
+			wheel_radius: wheel_diameter / 2.0,
 
-	pub fn turn_diameter(&self) -> Length { self.left_wheel_offset + self.right_wheel_offset }
+			last_left_angle: Angle::ZERO,
+			last_right_angle: Angle::ZERO,
+			last_rear_angle: Angle::ZERO,
 
-	pub fn cycle(&mut self) -> Result<Position, RotationSensorError> {
+			left_wheel_offset,
+			right_wheel_offset,
+			rear_wheel_offset,
+
+			x_state: Length::ZERO,
+			y_state: Length::ZERO,
+			heading_state: Angle::ZERO,
+		}
+	}
+
+	pub fn start_tracking(&'static mut self) {
+		let mut cycle = Loop::new(Duration::from_millis(20));
+		Task::spawn(move || loop {
+			self.cycle().unwrap();
+			cycle.delay();
+		})
+		.unwrap();
+	}
+
+	pub fn get_position(&self) -> Position {
+		Position {
+			x: self.x_state,
+			y: self.y_state,
+			heading: self.heading_state,
+		}
+	}
+
+	fn turn_diameter(&self) -> Length { self.left_wheel_offset + self.right_wheel_offset }
+
+	fn cycle(&mut self) -> Result<(), RotationSensorError> {
 		let left_angle: Angle = self.left_sensor.get_angle()?;
 		let right_angle: Angle = self.right_sensor.get_angle()?;
 		let rear_angle: Angle = self.rear_sensor.get_angle()?;
 
-		let left_distance_change: Length = (self.last_left_angle - left_angle) * self.wheel_radius();
-		let right_distance_change: Length = (self.last_right_angle - right_angle) * self.wheel_radius();
-		let rear_distance_change: Length = (self.last_rear_angle - rear_angle) * self.wheel_radius();
+		let left_distance_change: Length = (self.last_left_angle - left_angle) * self.wheel_radius;
+		let right_distance_change: Length = (self.last_right_angle - right_angle) * self.wheel_radius;
+		let rear_distance_change: Length = (self.last_rear_angle - rear_angle) * self.wheel_radius;
 
-		let arc_angle: Angle = ((left_distance_change - right_distance_change) / self.turn_diameter()).into();
+		let local_angle_change: Angle = ((left_distance_change - right_distance_change) / self.turn_diameter()).into();
 
-		let coefficient: Ratio = 2.0 * Ratio::new::<ratio>(libm::sin((arc_angle / 2.0).get::<radian>())); // No STD lib for trig functions
+		let coefficient: Ratio = 2.0 * (local_angle_change / 2.0).sin();
 
-		let x_movement: Length = coefficient * ((rear_distance_change / arc_angle) + self.rear_wheel_offset);
-		let y_movement: Length = coefficient * ((right_distance_change / arc_angle) + self.right_wheel_offset);
+		let local_x_movement: Length = if local_angle_change == Angle::ZERO {
+			rear_distance_change
+		} else {
+			coefficient * ((rear_distance_change / local_angle_change) + self.rear_wheel_offset)
+		};
 
-		let second_coefficient: Ratio =
-			Ratio::new::<ratio>(libm::cos((self.last_heading + (arc_angle / 2.0)).get::<radian>()));
+		let local_y_movement: Length = if local_angle_change == Angle::ZERO {
+			right_distance_change
+		} else {
+			coefficient * ((right_distance_change / local_angle_change) + self.right_wheel_offset)
+		};
 
-		let x_change: Length = second_coefficient * x_movement;
-		let y_change: Length = second_coefficient * y_movement;
+		let average_angle: Angle = self.heading_state + (local_angle_change / 2.0);
+
+		let polar_radius: Length = (local_x_movement * local_x_movement + local_y_movement * local_y_movement).sqrt();
+
+		let polar_angle: Angle = local_y_movement.atan2(local_x_movement) - average_angle;
+
+		let x_change: Length = polar_angle.sin() * polar_radius;
+		let y_change: Length = polar_angle.cos() * polar_radius;
 
 		self.last_left_angle = left_angle;
 		self.last_right_angle = right_angle;
 		self.last_rear_angle = rear_angle;
 
-		let x: Length = self.last_x + x_change;
-		let y: Length = self.last_y + y_change;
-		let heading: Angle = self.last_heading + arc_angle;
+		let x: Length = self.x_state + x_change;
+		let y: Length = self.y_state + y_change;
+		let heading: Angle = self.heading_state + local_angle_change;
 
-		self.last_x = x;
-		self.last_y = y;
-		self.last_heading = heading;
+		self.x_state = x;
+		self.y_state = y;
+		self.heading_state = heading;
 
-		Ok(Position { x, y, heading })
+		Ok(())
 	}
 }
