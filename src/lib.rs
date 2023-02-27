@@ -9,6 +9,7 @@ use uom::si::f64::{Frequency, FrequencyDrift, Ratio};
 
 extern crate alloc;
 
+pub mod odometry;
 pub mod pid;
 pub mod tank_drive;
 pub mod x_drive;
