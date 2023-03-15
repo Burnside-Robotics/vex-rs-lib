@@ -1,15 +1,15 @@
-use core::time::Duration;
+use core::{fmt::Display, time::Duration};
 
 use uom::{
 	si::{
-		angle::radian,
+		angle::degree,
 		f64::{Angle, Length, Ratio},
-		length::meter,
+		length::inch,
 	},
 	ConstZero,
 };
 use vex_rt::{
-	rotation::{RotationSensor, RotationSensorError},
+	prelude::{AdiEncoder, AdiEncoderError},
 	rtos::{Loop, Task},
 };
 
@@ -21,10 +21,22 @@ pub struct Position {
 	heading: Angle,
 }
 
+impl Display for Position {
+	fn fmt(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
+		write!(
+			f,
+			"(x: {:.2}in, y: {:.2}in, heading: {:.1}deg)",
+			self.x.get::<inch>(),
+			self.y.get::<inch>(),
+			self.heading.get::<degree>()
+		)
+	}
+}
+
 pub struct OdometrySystem {
-	left_sensor: RotationSensor,
-	right_sensor: RotationSensor,
-	rear_sensor: RotationSensor,
+	left_sensor: AdiEncoder,
+	right_sensor: AdiEncoder,
+	rear_sensor: AdiEncoder,
 
 	wheel_radius: Length,
 
@@ -43,7 +55,7 @@ pub struct OdometrySystem {
 
 impl OdometrySystem {
 	pub fn new(
-		left_sensor: RotationSensor, right_sensor: RotationSensor, rear_sensor: RotationSensor, wheel_diameter: Length,
+		left_sensor: AdiEncoder, right_sensor: AdiEncoder, rear_sensor: AdiEncoder, wheel_diameter: Length,
 		left_wheel_offset: Length, right_wheel_offset: Length, rear_wheel_offset: Length,
 	) -> Self {
 		Self {
@@ -85,14 +97,14 @@ impl OdometrySystem {
 
 	fn turn_diameter(&self) -> Length { self.left_wheel_offset + self.right_wheel_offset }
 
-	fn cycle(&mut self) -> Result<(), RotationSensorError> {
-		let left_angle: Angle = self.left_sensor.get_angle()?;
-		let right_angle: Angle = self.right_sensor.get_angle()?;
-		let rear_angle: Angle = self.rear_sensor.get_angle()?;
+	pub fn cycle(&mut self) -> Result<(), AdiEncoderError> {
+		let left_angle: Angle = self.left_sensor.get()?;
+		let right_angle: Angle = self.right_sensor.get()?;
+		let rear_angle: Angle = self.rear_sensor.get()?;
 
-		let left_distance_change: Length = (self.last_left_angle - left_angle) * self.wheel_radius;
+		let left_distance_change: Length = (left_angle - self.last_left_angle) * self.wheel_radius;
 		let right_distance_change: Length = (self.last_right_angle - right_angle) * self.wheel_radius;
-		let rear_distance_change: Length = (self.last_rear_angle - rear_angle) * self.wheel_radius;
+		let rear_distance_change: Length = (rear_angle - self.last_rear_angle) * self.wheel_radius;
 
 		let local_angle_change: Angle = ((left_distance_change - right_distance_change) / self.turn_diameter()).into();
 
@@ -116,8 +128,8 @@ impl OdometrySystem {
 
 		let polar_angle: Angle = local_y_movement.atan2(local_x_movement) - average_angle;
 
-		let x_change: Length = polar_angle.sin() * polar_radius;
-		let y_change: Length = polar_angle.cos() * polar_radius;
+		let x_change: Length = polar_angle.cos() * polar_radius;
+		let y_change: Length = polar_angle.sin() * polar_radius;
 
 		self.last_left_angle = left_angle;
 		self.last_right_angle = right_angle;
