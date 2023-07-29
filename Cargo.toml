@@ -9,5 +9,5 @@ description = "Library with wrappers for features from the vex_rt crate which us
 
 [dependencies]
 libm = "0.2.6"
-uom = { git = "https://github.com/professoralex13/uom", default-features = false, features = ["f64", "si"] }
+uom = { version = "0.35.0", default-features = false, features = ["f64", "si"] }
 vex-rt = { git = "https://gitlab.com/professoralex13/vex-rt/", branch = "uom", features = ["uom"] }
