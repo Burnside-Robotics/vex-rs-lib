@@ -1,5 +1,4 @@
 //! Library with utilities for vex rust robots
-
 #![no_std]
 #![warn(missing_docs)]
 
@@ -9,9 +8,11 @@ use uom::si::f64::{Frequency, FrequencyDrift, Ratio};
 
 extern crate alloc;
 
+pub mod coordinates;
 mod math;
 pub mod odometry;
 pub mod pid;
+pub mod pure_pursuit;
 pub mod tank_drive;
 pub mod x_drive;
 

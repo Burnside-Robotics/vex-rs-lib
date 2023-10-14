@@ -3,7 +3,7 @@ use uom::{
 	ConstZero,
 };
 use vex_rt::{
-	prelude::{println, Motor, MotorError},
+	prelude::{Motor, MotorError},
 	rtos::{Context, Loop},
 	select,
 };

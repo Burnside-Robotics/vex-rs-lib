@@ -1,42 +1,20 @@
-use core::{fmt::Display, time::Duration};
+use core::time::Duration;
 
 use uom::{
-	si::{
-		angle::degree,
-		f64::{Angle, Length, Ratio},
-		length::inch,
-	},
+	si::f64::{Angle, Length, Ratio},
 	ConstZero,
 };
 use vex_rt::{
-	prelude::{AdiEncoder, AdiEncoderError},
-	rtos::{Loop, Task},
+	prelude::println,
+	rotation::{RotationSensor, RotationSensorError},
 };
 
-use crate::math::*;
-
-pub struct Position {
-	x: Length,
-	y: Length,
-	heading: Angle,
-}
-
-impl Display for Position {
-	fn fmt(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
-		write!(
-			f,
-			"(x: {:.2}in, y: {:.2}in, heading: {:.1}deg)",
-			self.x.get::<inch>(),
-			self.y.get::<inch>(),
-			self.heading.get::<degree>()
-		)
-	}
-}
+use crate::{coordinates::Position, math::*};
 
 pub struct OdometrySystem {
-	left_sensor: AdiEncoder,
-	right_sensor: AdiEncoder,
-	rear_sensor: AdiEncoder,
+	left_sensor: RotationSensor,
+	right_sensor: RotationSensor,
+	rear_sensor: RotationSensor,
 
 	wheel_radius: Length,
 
@@ -55,9 +33,13 @@ pub struct OdometrySystem {
 
 impl OdometrySystem {
 	pub fn new(
-		left_sensor: AdiEncoder, right_sensor: AdiEncoder, rear_sensor: AdiEncoder, wheel_diameter: Length,
-		left_wheel_offset: Length, right_wheel_offset: Length, rear_wheel_offset: Length,
+		mut left_sensor: RotationSensor, mut right_sensor: RotationSensor, mut rear_sensor: RotationSensor,
+		wheel_diameter: Length, left_wheel_offset: Length, right_wheel_offset: Length, rear_wheel_offset: Length,
 	) -> Self {
+		left_sensor.set_position(Angle::ZERO);
+		right_sensor.set_position(Angle::ZERO);
+		rear_sensor.set_position(Angle::ZERO);
+
 		Self {
 			left_sensor,
 			right_sensor,
@@ -78,32 +60,17 @@ impl OdometrySystem {
 		}
 	}
 
-	pub fn start_tracking(&'static mut self) {
-		let mut cycle = Loop::new(Duration::from_millis(20));
-		Task::spawn(move || loop {
-			self.cycle().unwrap();
-			cycle.delay();
-		})
-		.unwrap();
-	}
-
-	pub fn get_position(&self) -> Position {
-		Position {
-			x: self.x_state,
-			y: self.y_state,
-			heading: self.heading_state,
-		}
-	}
+	pub fn get_position(&self) -> Position { Position::new(self.x_state, self.y_state, self.heading_state) }
 
 	fn turn_diameter(&self) -> Length { self.left_wheel_offset + self.right_wheel_offset }
 
-	pub fn cycle(&mut self) -> Result<(), AdiEncoderError> {
-		let left_angle: Angle = self.left_sensor.get()?;
-		let right_angle: Angle = self.right_sensor.get()?;
-		let rear_angle: Angle = self.rear_sensor.get()?;
+	pub fn cycle(&mut self) -> Result<(), RotationSensorError> {
+		let left_angle: Angle = self.left_sensor.get_position()?;
+		let right_angle: Angle = self.right_sensor.get_position()?;
+		let rear_angle: Angle = self.rear_sensor.get_position()?;
 
 		let left_distance_change: Length = (left_angle - self.last_left_angle) * self.wheel_radius;
-		let right_distance_change: Length = (self.last_right_angle - right_angle) * self.wheel_radius;
+		let right_distance_change: Length = (right_angle - self.last_right_angle) * self.wheel_radius;
 		let rear_distance_change: Length = (rear_angle - self.last_rear_angle) * self.wheel_radius;
 
 		let local_angle_change: Angle = ((left_distance_change - right_distance_change) / self.turn_diameter()).into();
